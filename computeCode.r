@@ -1,5 +1,3 @@
-### RE-WORK COMPUTECODE FUNCTION TO WORK ON LISTS AND GIVE CONSISTENT OUTPUT ###
-
 #this file is for computation of mapping codes between a list of DNA motifs that are given
 #one application is that the DNA motifs are obtained from RNA and DNA and the pairing and the mapping code are estimated
 
@@ -120,11 +118,26 @@ createRandomCode2 = function(listR, listD){
 
 
 
-## objective calculates the absolute difference between an ideal and real partner of a motif and nomralises the value to the length of the motif
+## objective calculates the absolute difference between an ideal and real partner of a motif and normalises the value to the length of the motif
 objective = function(R,D,C){
-  objective=0
-  objective =  objective + sum(abs(D - projectD(R = R, C = C)) / ncol(R))
-  return(objective)
+  return(sum(abs(D - projectD(R = R, C = C)) / ncol(R)))
+}
+
+
+### slide finds the window of lowest objective in a motif pair of unequal ncol()
+slideValue = function(long,short,C){
+  tract = ncol(short)
+  len = ncol(long) - tract
+  return(min(sapply(lapply(0:len, function(y) 1:tract + y), function(x) objective(R = short, D = long[,x], C = C))))
+}
+
+### slide finds the window of lowest objective in a motif pair of unequal ncol()
+slideRegion = function(long,short,C){
+  tract = ncol(short)
+  len = ncol(long) - tract
+  regions = lapply(0:len, function(y) 1:tract + y)
+  cols = regions[[which.min(sapply(regions, function(x) objective(R = short, D = long[,x], C = C)))]]
+  return(long[,cols])
 }
 
 
@@ -132,45 +145,67 @@ objective = function(R,D,C){
 #along the longer motif and calculating at each position. The function takes the same input as the regular objective function
 #but outputs a list containing both the minumum objective value obtained and the reduced profile of the longer matrix
 sliding_objective = function(R,D,C){
+  equal = ncol(R) == ncol(D)
   shortR = ncol(R) < ncol(D)
-  if(ncol(R)==ncol(D)){
-    return(objective(R,D,C))
-  }
-  else if(shortR){
-    tract = ncol(R)-1
-    ranges = lapply(c(1:(ncol(D)-tract)), function(x) c(x:(x+tract)))
-    objective_list = sapply(ranges, function(x) objective(R = R, D = D[,x], C = C))
-    int_range = D[,ranges[[which.min(objective_list)]]]
-    return(list(Minimum_objective_value=min(objective_list), Motif_section=int_range))
-  } else {
-    tract = ncol(D)-1
-    ranges = lapply(c(1:(ncol(R)-tract)), function(x) c(x:(x+tract)))
-    objective_list = sapply(ranges, function(x) objective(R = D, D = R[,x], C = C))
-    int_range = R[,ranges[[which.min(objective_list)]]]
-    return(list(Minimum_objective_value=min(objective_list), Motif_section=int_range))
-  }
+  return(ifelse(equal, yes = objective(R,D,C), no = ifelse(shortR, yes = slideValue(long = D, short = R, C = C), no = slideValue(long = R, short = D, C = C))))
 }
+
 
 #getBestPartner calculates the objective value of a given code for a single motif of one list against all possible partners in a second list, and returns
 #the best partner motif given the supplied code
-getBestPartner = function(R,listD,C,Value=FALSE){
-  obj_list = sapply(listD, function(y) sliding_objective(R = R, D = y, C = C)[[1]])
-  if(isTRUE(Value)){
-    return(list(partner = which.min(obj_list), objective = min(obj_list)))
-  } else {
-    return(which.min(obj_list))
-  }
+getBestPartner = function(R,listD,C){
+  which.min(sapply(listD, function(y) sliding_objective(R = R, D = y, C = C)))
+  return(which.min(sapply(listD, function(y) sliding_objective(R = R, D = y, C = C))))
 }
+
+# #getBestPair returns for each matrix in R the best fit in D using the current code matrix
+# #it returns a list of indices which represent the best fit to each of the matrices in listR
+# #getBestPair returns multpile-matching indices, unlike getBestPair2 which returns only unique matches
+# getBestPair = function(listR,listD,C){
+#   start = Sys.time()
+#   if(length(listR)>length(listD)){
+#     bestPairs = matrix(c(sapply(listD, function(x){getBestPartner(R = x, listD = listR, C = C)}),c(1:length(listD))),nrow = length(listD))
+#   } else {
+#     bestPairs = matrix(c(c(1:length(listR)),sapply(listR, function(x){getBestPartner(R = x, listD = listD, C = C)})),nrow = length(listR))
+#   }
+#   Sys.time() - start
+#   return(bestPairs)
+# }
 
 #getBestPair returns for each matrix in R the best fit in D using the current code matrix
 #it returns a list of indices which represent the best fit to each of the matrices in listR
 #getBestPair returns multpile-matching indices, unlike getBestPair2 which returns only unique matches
 getBestPair = function(listR,listD,C){
-  if(length(listR)>length(listD)){
-    bestPairs = matrix(c(sapply(listD, function(x){getBestPartner(R = x, listD = listR, C = C)}),c(1:length(listD))),nrow = length(listD))
+  start = Sys.time()
+  longR = length(listR) > length(listD)
+  ifelse(test = longR, yes = matrix(c(sapply(listD, function(x){getBestPartner(R = x, listD = listR, C = C)}),c(1:length(listD))),nrow = length(listD)),
+         no = matrix(c(c(1:length(listR)),sapply(listR, function(x){getBestPartner(R = x, listD = listD, C = C)})),nrow = length(listR)))
+  Sys.time() - start
+  return(bestPairs)
+}
+
+#getBestPair returns for each matrix in R the best fit in D using the current code matrix
+#it returns a list of indices which represent the best fit to each of the matrices in listR
+#getBestPair returns multpile-matching indices, unlike getBestPair2 which returns only unique matches
+getBestPair = function(listR,listD,C,cores){
+  start = Sys.time()
+  library(foreach)
+  library(doParallel)
+  cl <- makeCluster(cores)
+  registerDoParallel(cl)
+  clusterEvalQ(cl,library('computeCode'))
+  longR = length(listR) > length(listD)
+  if(longR) {
+    res = foreach(q=1:length(listD)) %dopar% {
+      c(getBestPartner(R = listD[[q]], listD = listR, C = C),q)
+    }
   } else {
-    bestPairs = matrix(c(c(1:length(listR)),sapply(listR, function(x){getBestPartner(R = x, listD = listD, C = C)})),nrow = length(listR))
+    res = foreach(q=1:length(listR)) %dopar% {
+      return(c(q,getBestPartner(R = listR[[q]], listD = listD, C = C)))
+    }
   }
+  stopCluster(cl)
+  bestPairs = do.call('rbind', res)
   return(bestPairs)
 }
 
@@ -207,26 +242,17 @@ computeCode = function(R,D){
   Q=cbind(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p)
   A = matrix(c(rep(c(1,0,0,0),4), rep(c(0,1,0,0),4), rep(c(0,0,1,0),4), rep(c(0,0,0,1),4),rep(c(1,rep(0,16)), 15), 1), nrow = 16)
   b0 = c(1,1,1,1,rep(0,16))
-  if(is.positive.definite(t(Q)%*%Q)){
-    sol=solve.QP(t(Q) %*% Q, y %*% Q,A,b0,meq=4)
-  } else {
-    pd = nearPD(t(Q)%*%Q)
-    sol=solve.QP(pd$mat, y %*% Q,A,b0,meq=4)
-  }
-
-
-  return(round(matrix(sol$solution, nrow = 4), digits = 2))
-
+  sol = ifelse(test = is.positive.definite(t(Q)%*%Q), yes = solve.QP(t(Q) %*% Q, y %*% Q,A,b0,meq=4), no = solve.QP(nearPD(t(Q)%*%Q)$mat, y %*% Q,A,b0,meq=4))
+  return(matrix(sol[[1]], nrow = 4))
 }
 
 ## getCodeFromList iterates over the current pairing with computeCode and returns the mean code which explains the pairings
 getCodeFromList = function(listR, listD, pairing, code) {
-
   codeList = lapply(X = c(1:nrow(pairing)), FUN = function(i){
     if(ncol(listR[[pairing[i,1]]]) < ncol(listD[[pairing[i,2]]])){
-      computeCode(R = listR[[pairing[i,1]]], D = sliding_objective(R=listR[[pairing[i,1]]],D=listD[[pairing[i,2]]],C=code)[[2]])
+      computeCode(R = listR[[pairing[i,1]]], D = slideRegion(short = listR[[pairing[i,1]]],long = listD[[pairing[i,2]]],C = code))
     } else if(ncol(listR[[pairing[i,1]]]) > ncol(listD[[pairing[i,2]]])){
-      computeCode(R = sliding_objective(R=listR[[pairing[i,1]]],D=listD[[pairing[i,2]]],C = code)[[2]], D = listD[[pairing[i,2]]])
+      computeCode(R = slideRegion(long = listR[[pairing[i,1]]],short = listD[[pairing[i,2]]],C = code), D = listD[[pairing[i,2]]])
     } else if(ncol(listR[[pairing[i,1]]]) == ncol(listD[[pairing[i,2]]])){
       computeCode(R = listR[[pairing[i,1]]], D = listD[[pairing[i,2]]])
     }})
@@ -239,11 +265,9 @@ getCodeFromList = function(listR, listD, pairing, code) {
 #this function is for evaluation whether the objective value of all matrices is improving during optimization
 computeOverallObjective = function(listR,listD,pairing,code){
   objectives = sapply(X = c(1:nrow(pairing)), FUN = function(i){
-    if(ncol(listR[[pairing[i,1]]]) == ncol(listD[[pairing[i,2]]])){
-      objective(listR[[pairing[i,1]]],listD[[pairing[i,2]]],code)
-    } else {
-      sliding_objective(listR[[pairing[i,1]]],listD[[pairing[i,2]]],code)[[1]]
-    }})
+    equalCols = ncol(listR[[pairing[i,1]]]) == ncol(listD[[pairing[i,2]]])
+    return(ifelse(test = equalCols, yes = objective(listR[[pairing[i,1]]],listD[[pairing[i,2]]],code), no = sliding_objective(listR[[pairing[i,1]]],listD[[pairing[i,2]]],code)))
+  })
   return(sum(objectives))
 }
 
@@ -290,18 +314,15 @@ assignPairingsToCodes = function(pairings, codes, listR, listD){
       R = listR[[pairings[i,1]]]
       D = listD[[pairings[i,2]]]
       C = codes[[j]]
-      if(ncol(R) == ncol(D)){
-        objective(R,D,C)
-      } else {
-        sliding_objective(R,D,C)[[1]]
-      }
+      equalCols = ncol(R) == ncol(D)
+      return(ifelse(test = equalCols, yes = objective(R,D,C), no = sliding_objective(R,D,C)))
     })
   })
   return(apply(objs,2,which.min))
 }
 
 #optimize(listR,listD) does the complete optimization
-optimize =function(listR,listD, unique_pairs = F, dp = 7, plot = FALSE){
+optimize =function(listR,listD, unique_pairs = F, dp = 7, plot = FALSE, cores){
   #create random code
   iteration = -1
   iteration_list = c()
@@ -310,7 +331,7 @@ optimize =function(listR,listD, unique_pairs = F, dp = 7, plot = FALSE){
   if(unique_pairs == T) {
     pairing = getBestPair2(listR,listD,oldEstimate)
   } else {
-    pairing = getBestPair(listR,listD,oldEstimate)
+    pairing = getBestPair(listR,listD,oldEstimate, cores = cores)
   }
   if(plot == TRUE){
     pair_error = c()
@@ -319,6 +340,7 @@ optimize =function(listR,listD, unique_pairs = F, dp = 7, plot = FALSE){
   #while the objective value of the pairing and the code is improving (gets smaller) do
   differenceSmaller = 1
   while(differenceSmaller == 1){
+    message(iteration)
     iteration = iteration + 1
     iteration_list = c(iteration_list, iteration)
     currentObjectiveValue = computeOverallObjective(listR,listD,pairing,oldEstimate)
@@ -327,7 +349,7 @@ optimize =function(listR,listD, unique_pairs = F, dp = 7, plot = FALSE){
     if(unique_pairs == T) {
       pairing = getBestPair2(listR,listD,oldEstimate)
     } else {
-      pairing = getBestPair(listR,listD,oldEstimate)
+      pairing = getBestPair(listR,listD,oldEstimate, cores = cores)
     }
     if(plot == TRUE){
       pair_error = c(pair_error, length(which(pairing[,2] != c(1:nrow(pairing)))))
@@ -403,13 +425,7 @@ plotOptimization = function(listR, listD, dp = 7, unique_pairs = F, starts) {
 ##get original index of motif in list
 
 originalIndex = function(motif,originalList){
-  for(i in 1:length(originalList)){
-    if(all.equal(motif,originalList[[i]]) == TRUE){
-      originalIndex = i
-    }
-  }
-
-  return(originalIndex)
+  return(which(sapply(originalList, function(x) isTRUE(all.equal(motif,x))) == TRUE))
 }
 
 ##get unique codes from list including many (possibly duplicated) codes
@@ -462,21 +478,21 @@ whichMatrixEqual = function(target,options){
   return(res)
 }
 
-collateResults = function(listR,listD,group,code){
-  result = list()
-  result$pairing = group
-  result$code = getCodeFromList(listR = listR, listD = listD, pairing = group, code = code)
-  result$objective = computeOverallObjective(listR = listR, listD = listD, pairing = group, code = result$code)
-  return(result)
-}
-
-getBestAssignment = function(R,listD,codes){
+getBestAssignment = function(R,long,codes,cores){
   code_pairs = c(1:length(codes))
   code_objs = c(1:length(codes))
   for(n in 1:length(codes)){
-    res = getBestPartner(R, listD, C = codes[[n]],Value = T)
-    code_pairs[n] = res$partner
-    code_objs[n] = res$objective
+    library(foreach)
+    library(doParallel)
+    cl <- makeCluster(cores)
+    registerDoParallel(cl)
+    clusterEvalQ(cl,library('computeCode'))
+    res = foreach(q=1:length(long)) %dopar% {
+      sliding_objective(R = R, D = long[[q]], C = codes[[n]])
+    }
+    stopCluster(cl)
+    code_objs[n] = min(unlist(res))
+    code_pairs[n] = which.min(unlist(res))
   }
   ass = which.min(code_objs)
   partner = code_pairs[which.min(code_objs)]
@@ -484,26 +500,107 @@ getBestAssignment = function(R,listD,codes){
 }
 
 
+### score matrix per code ###
+scoreMatrix = function(short, long, codes, cores){
+  library(foreach)
+  library(doParallel)
+  cl <- makeCluster(cores)
+  registerDoParallel(cl)
+  clusterEvalQ(cl,library('computeCode'))
+  mats = vector(mode = 'list', length = length(codes))
+  for (z in 1:length(codes)){
+    res = foreach(q=1:length(short)) %dopar% {
+      lapply(long, function(x) sliding_objective(R = short[[q]], D = x, C = codes[[z]]))
+    }
+    mats[[z]] = matrix(data = unlist(res), byrow = T, nrow = length(res))
+  }
+  stopCluster(cl)
+  return(mats)
+}
+
+### rowMins is a function to return the minimum value per row of a numeric matrix ###
+rowMins = function(mat) {
+  return(sapply(1:nrow(mat), function(x) min(mat[x,])))
+}
+
+### rowWhichMins is a function to return the minimum value per row of a numeric matrix ###
+rowWhichMins = function(mat) {
+  return(sapply(1:nrow(mat), function(x) which.min(mat[x,])))
+}
+
+assignPairingsToCodes = function(scoreMatrix) {
+  mins = matrix(unlist(lapply(scoreMatrix,rowMins)), ncol = length(scoreMatrix))
+  whichmins = matrix(unlist(lapply(scoreMatrix,rowWhichMins)), ncol = length(scoreMatrix))
+  ass = lapply(1:nrow(mins), function(x){
+    cd = which.min(mins[x,])
+    return(c(whichmins[x,cd], cd))
+  })
+  ass = cbind(1:length(short),matrix(unlist(ass), nrow = length(ass), byrow = T))
+  return(ass)
+}
+
+optimizeGroup =function(short,long,group,cores,code){
+  #create random code
+  subShort = short[group[,1]]
+  subLong = long[group[,2]]
+  iteration = 1
+  iteration_list = c()
+  objective_list = c()
+  #oldEstimate = getCodeFromList(listR = short, listD = long, pairing = group, code = code)
+  oldEstimate = code
+  pairing = getBestPair(subShort,subLong,oldEstimate, cores = cores)
+  #while the objective value of the pairing and the code is improving (gets smaller) do
+  differenceSmaller = 1
+  while(differenceSmaller == 1){
+    message(paste('Optimization iteration', iteration))
+    iteration_list = c(iteration_list, iteration)
+    currentObjectiveValue = computeOverallObjective(subShort,subLong,pairing,oldEstimate)
+    objective_list = c(objective_list, currentObjectiveValue)
+    newCode = getCodeFromList(subShort, subLong, pairing, code = oldEstimate)
+    pairing = getBestPair(subShort,subLong,oldEstimate, cores = cores)
+    newObjectiveValue = computeOverallObjective(subShort,subLong,pairing,newCode)
+    if(currentObjectiveValue > newObjectiveValue){
+      differenceSmaller =1
+    }else{
+      differenceSmaller = 0
+    }
+    oldEstimate=newCode
+    iteration = iteration + 1
+  }
+  ori1 = sapply(pairing[,1], function(x) originalIndex(motif = subShort[[x]], originalList = short))
+  ori2 = sapply(pairing[,2], function(x) originalIndex(motif = subLong[[x]], originalList = long))
+  return(list(pairing = matrix(cbind(ori1,ori2), nrow = length(subShort)), objective = currentObjectiveValue/nrow(pairing), code = newCode))
+}
+
+collateResults = function(short,long,groups,codes,cores){
+  opt = lapply(1:length(groups), function(x) {
+    message(paste('Optimizing group', x))
+    optimizeGroup(short = short, long = long, group = groups[[x]], cores = cores, code = codes[[x]])
+  })
+  return(opt)
+}
+
 ## findMultipleCodes is a wrapper of the optimize function which will report a user-defined number of codes. The function produces a user-defined number of random codes which is
 ## are used to cluster motif pairings and subsequently optimize these codes to produce the results. Each motif's best partner per code is discovered and then used to assign motif
 ## pairings to codes and form groups of motifs. Each group of motif pairs is then optimized to produce one code/pairing result per code requested by the user.
 
-findMultipleCodes = function(listR,listD,initiations,cores,nCodes){
-  library(foreach)
-  library(doParallel)
+findMultipleCodes = function(short,long,initiations,cores,nCodes,reportAll = F,iterationLimit, fileName){
   start = Sys.time()
-  cl <- makeCluster(cores)
-  registerDoParallel(cl)
-  clusterEvalQ(cl,library('computeCode'))
-  #results = foreach(q=1:initiations) %dopar% {
+  finalRes = vector(mode = 'list', length = initiations)
+  for(q in 1:initiations) {
+    message(paste('INITIATION', q))
     pairsChanged = 1
-    iteration = 1
-    old_groups = matrix(c(1:length(listD),1:length(listD)),nrow = length(listD))
+    iteration = 0
+    old_groups = matrix(c(1:length(short),1:length(short)),nrow = length(short))
+    res = list()
     while (pairsChanged == 1) {
+      iteration = iteration + 1
+      message(paste('Iteration', iteration))
       if(iteration == 1){
         codes = vector(mode = 'list', length = nCodes)
         for(i in 1:nCodes){
-          codes[[i]] = createRandomCode(alph = 4, dp = 2)
+          #codes[[i]] = createRandomCode(alph = 4, dp = 2)
+          codes[[i]] = t(createRandomPWM(alph = 4, dp = 2, length = 4, lowEntropy = T))
         }
       } else {
         codes = vector(mode = 'list', length = nCodes)
@@ -511,117 +608,69 @@ findMultipleCodes = function(listR,listD,initiations,cores,nCodes){
           codes[[i]] = results[[i]]$code
         }
       }
-      ass = lapply(listR, function(x){getBestAssignment(x,listD,codes)})
-      pairings = matrix(c(c(1:length(listR)), unlist(ass)[c(T,F)], unlist(ass)[c(F,T)]),nrow = length(listR))
-      group_index = sort(unique(pairings[,3]))
-      groups = lapply(group_index, function(x){subset(pairings[,1:2], pairings[,3] == x)})
-      if(iteration > 1 & allMatricesEqual(old_groups, groups)){
-        pairsChanged = 0
+      message('Generating objective matrix...')
+      scoreMat = scoreMatrix(short = short, long = long, codes = codes, cores = cores)
+      ass = assignPairingsToCodes(scoreMatrix = scoreMat)
+      group_index = sort(unique(ass[,3]))
+      groups = lapply(group_index, function(x){subset(ass[,1:2], ass[,3] == x)})
+      results = collateResults(short = short, long = long, groups = groups, codes = codes, cores = cores)
+      if(isTRUE(reportAll)){
+        res[[iteration]] = list()
+        res[[iteration]]$iteration = iteration
+        res[[iteration]]$codes = lapply(results, function(x) x$code)
+        res[[iteration]]$groups = lapply(results, function(x) x$pairing)
+        res[[iteration]]$objectives = sapply(results, function(x) x$objective)
+        res[[iteration]]$complexity = sapply(results, function(x) length(unique(x$pairing[,2])) / length(unique(x$pairing[,1]))*100)
+        res[[iteration]]$iterations = iteration
       }
-      results = lapply(groups, function(x){collateResults(listR = listR, listD = listD, group = x, code = codes[[whichMatrixEqual(target = x,groups)]])})
-      iteration = iteration + 1
+      if(iteration > 1 & allMatricesEqual(old_groups, groups)){
+        message('Groups unchanged, terminating...')
+        pairsChanged = 0
+      } else if(iteration > iterationLimit){
+        message('Iteration limit reached, terminating...')
+        pairsChanged = 0
+      } else if(iteration > 1){
+        if(sum(sapply(results, function(x) x$objective)) > oldObj){
+          message('Objectives increased, terminating...')
+          pairsChanged = 0
+        } else if(isTRUE(reportAll)){
+          if(sum(res[[iteration]]$objectives) > sum(res[[iteration - 1]]$objectives)){
+            message('Objectives increased, terminating...')
+            pairsChanged = 0
+          }
+        } else if(isFALSE(allMatricesEqual(old_groups, groups))){
+          message('Groups changed, continuing...')
+          old_groups = groups
+        }
+      }
+      oldObj = sum(sapply(results, function(x) x$objective))
       old_groups = groups
     }
-    show(iteration)
-    show(results)
-  #}
-  stopCluster(cl)
-  end = Sys.time() - start
-  show(end)
-  objectives = c()
-  for (i in 1:length(results)) {
-    objectives[i] = results[[i]]$obj
+    if(isTRUE(reportAll)){
+      finalRes[[q]] = res
+    } else {
+      results$Iterations = iteration
+      finalRes[[q]] = results
+    }
+    message('Saving results...')
+    saveRDS(object = finalRes, file = fileName)
   }
-  #best_res = results[[which.min(objectives)]][[1]]
-  #return(best_res)
-  return(results)
+  return(finalRes)
 }
 
-## splitMotifListByLength splits a motif list of mixed length motifs into several sublists of motifs with the same lengths for comparison with
-## other identical length motifs
-
-splitMotifListByLength = function(motifList){
-  lengths = sapply(motifList, function(x) ncol(x))
-  names(lengths) = NULL
-  splitMotifs = lapply(c(min(lengths):max(lengths)), function(x) which(lengths == x))
-  names(splitMotifs) = c(min(lengths):max(lengths))
-  return(splitMotifs)
+shuffleCode = function(code){
+  shuffled = do.call('rbind', lapply(1:nrow(code), function(x) code[x,][sample(1:4)]))[,sample(1:4)]
+  dimnames(shuffled) = list(c('A', 'C', 'G', 'T'), c('A', 'C', 'G', 'T'))
+  return(shuffled)
 }
 
-
-## compareMotifsAgainstDatabases compares a list of parsed motifs against a database of motifs (parsed into a text file, e.g. JASPAR, AtTRACT) for the purpose
-## of removing possible artefacts arising from TF-binding/RNA-binding proteins. The function takes text files for both the database motifs and user-provided motifs,
-## and a minimum length of motif to compare between the sets. The function will output the motifs which are present in both sets of motifs (and hence could be
-## removed from the set before further analysis). This function is used during pre-processing of the real data.
-
-compareMotifsAgainstDatabases = function(motifs, database, min) {
-
-  library(computeCode)
-  #file = read.table(file = database, fill = T, sep = '\t', stringsAsFactors = F)
-  file = read.table(file = database, fill = T, stringsAsFactors = F)
-  file = file[,1:4]
-  file_arr = file[,1]
-  file_index = suppressWarnings(expr = which(!(is.na(as.integer(file_arr))), arr.ind = T))
-  start = c(1, which(diff(file_index) != 1 & diff(file_index) != 0) + 1)
-  end = c(start - 1, length(file_index))
-  individual_motifs = split(file_index, cumsum(c(0, diff(file_index) > 1)))
-  motif_list = lapply(individual_motifs, function(x) matrix(as.numeric(t(file[x,])),nrow = 4))
-  #user = readMotifs(filename = motifs)
-  user = motifs
-  db_split = splitMotifListByLength(motifList = motif_list)
-  db_split = db_split[sapply(db_split, function(x) length(x) > 0)]
-  user_split = splitMotifListByLength(motifList = user)
-  user_split = user_split[sapply(user_split, function(x) length(x) > 0)]
-  db_split = db_split[which(names(db_split) %in% names(user_split))]
-  user_split = user_split[which(names(user_split) %in% names(db_split))]
-  IDcode = matrix(c(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1),nrow = 4)
-  strip = c()
-  for(i in 1:length(user_split)){
-    objs = sapply(user_split[[i]], function(x) getBestPartner(R = user[[x]], listD = motif_list[db_split[[i]]], C = IDcode, Value = T)$objective)
-    names(objs) = user_split[[i]]
-    strip = c(strip, as.numeric(names(objs[which(objs < min)])))
-  }
-  return(strip)
-
+addN = function(code){
+  code = cbind(code,rep(0,4))
+  code = rbind(code, rep(0,5))
+  code[code < 0] = 0
+  dimnames(code) = list(c('A', 'C', 'G', 'T', 'N'), c('A', 'C', 'G', 'T', 'N'))
+  return(as.matrix(code))
 }
-
-## stripTerminalHighEntropy removes high-entropy (i.e. non-discrete) positions in motifs if they are present at either the first or last
-## position of the motif. This results in the remaining motifs having a higher proportion of discrete positions which are well suited for
-## pairing in the code learning algorithm and should avoid the problem of promiscuous motifs pairing with many other motifs due to the
-## presence of non-discrete positions within the PWMs. It is used in pre-processing of the real data.
-
-stripTerminalHighEntropy = function(motif, entropy = 0.5) {
-
-  library(entropy)
-  disc = findDiscretePositions(matrix = motif, entropyLimit = entropy)
-  if(isFALSE(ncol(motif) %in% disc)){
-    motif = motif[,1:(ncol(motif)-1)]
-  }
-  if(isFALSE(1 %in% disc)) {
-    motif = motif[,2:ncol(motif)]
-  }
-  return(motif)
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
