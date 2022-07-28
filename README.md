@@ -21,3 +21,36 @@ _Codefinder_ is capable of learning multiple codes from a given set of motifs. I
 
 ## Output
 As previously stated, the output of _Codefinder_ contains the codes, pairings and objective values which were optimized across the course of the Expectation-Maximization algorithm. Whilst the user may define a number of codes to learn from the input data, it should be noted that if at any point during the opimization process the code has no motif pairs assigned to it, then it is excluded from the analysis. This means that in practice, the user may define the maximum number of codes to be learned, but _Codefinder_ may return fewer final results than that parameter.
+
+## Example
+
+Using the functions contained within _computeCode.R_, you can run an example optimization:
+
+(1) Generate a code
+```
+reverseComplement = matrix(c(0,0,0,1,
+                             0,0,1,0,
+                             0,1,0,0,
+                             1,0,0,0), 
+                             nrow = 4, byrow = T, dimnames = list(c('A', 'C', 'G', 'T'), c('A', 'C', 'G', 'T')))
+```
+
+(2) Use the code to generate two motif lists, which may be paired by the code generated in (1)
+```
+motifLists = createRandomPWMList(alph = 4, lengthRange = 6:8, dp = 2, listLengths = 15, code = reverseComplement, lowEntropy = T)
+```
+
+(3) Learn the original code from the motif lists using the Expectation-Maximization algorithm
+```
+
+opt = optimize(listR = motifLists$listR, listD = motifLists$listD, unique_pairs = F, dp = 2, plot = F, cores = 8)
+
+# check the results
+
+show(opt$code)
+show(opt$pairing)
+show(opt$objective)
+
+```
+
+
